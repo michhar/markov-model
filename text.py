@@ -1,6 +1,7 @@
 import re
+import string
+from collections import defaultdict
 from markov_model import MarkovModel
-
 
 class TextMarkovModel(MarkovModel):
     """
@@ -20,9 +21,24 @@ class TextMarkovModel(MarkovModel):
 
     def _lex(self, text):
         """
-        Splits the text into words
+        Splits the text into words, removing stopwords and infrequent words
         :param text: the text
         :return: a list of words
         """
+        # Let's process the corpus and get the richest information we can
+
         # Split at each character or sequence of character that is not a valid word character (in the \w regex class)
-        return re.compile('[^\w]+').split(text)
+        stoplist = set('for a of the and to in'.split())
+        text = [re.sub(r'[^\w]', '', word) for word in \
+                    text.lower().split() if word not in stoplist]
+        
+        # Get frequencies of words in corpus
+        frequency = defaultdict(int)
+        for word in text:
+            frequency[word] += 1
+
+        # Remove infrequent words (occurs only once) and return results
+        text = [word for word in text if frequency[word] > 1]
+        return text
+
+        

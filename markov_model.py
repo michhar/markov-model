@@ -1,4 +1,6 @@
 import random
+from scipy.sparse import dok_matrix
+import numpy as np
 from collections import Counter
 
 
@@ -22,12 +24,8 @@ class MarkovModel:
      - `b` the probability for the state A to got to state B
      - `c` the probability for the state A to got to state C
      - ...
-    Instead of using a 2D array, we use a dictionary of counters.
-    The dictionary contains the rows indexed by each state, each row contains counters indexed again by each state.
-    Using dictionary is usually simpler (we do not have to handle hash the elements), and faster than using an array
-    (O(1) instead of O(n) to access it, operation we use a lot).
-    Using a 2D array + a separate index + a hash function would be a bit faster, and a lot less memory consuming,
-    but more confusing and less generic.
+    Here we use a sparse dictionary of keys matrix to represent 
+    the above.
     """
 
     def __init__(self, states):
@@ -35,9 +33,15 @@ class MarkovModel:
         Create a markov chain
         :param states: a set of all the different states
         """
-        self.states = states
+        self.states = list(states)
         # We create the matrix
-        self.matrix = {state: Counter() for state in self.states}
+        # self.matrix = {state: Counter() for state in self.states}
+
+        # We create a sparse scipy matrix
+        n_states = len(states)
+        self.matrix = dok_matrix((n_states, n_states), dtype=np.float32)
+        self.dictionary = {state: elem_id for (state, elem_id) in 
+                               zip(self.states, range(len(self.states))) } 
 
     def next_state(self, current_state):
         """
@@ -45,19 +49,23 @@ class MarkovModel:
         :param current_state: the state to start with
         :return: a next state
         """
-        row = self.matrix[current_state]  # We get the row associated with the current state
-
-        # Here, we want to get an random element in respect to the probabilities in the row. We do this in O(n) by
-        # selecting a random number between 0 and 1, walking though the elements and their probability in the list,
-        # subtracting the probabilities from our number until it is 0 or less.
-        # But since the probabilities in the row do not add up to 1 (it is only a part of the matrix), we generate a
-        # number between 0 and the sum of probabilities in the row
-        total = sum(row.values())
-        number = random.uniform(0.0, total)  # Generate a number in [0, total] with equal probability
-        for state, probability in row.items():
-            number -= probability
-            if number <= 0:
-                return state
+        # Get the lookup id (current state numerically)
+        elem_id = self.dictionary[current_state]
+        # We get the row associated with the current state
+        row = np.array(self.matrix[elem_id, :].todense())[0]
+        max_val = max(row)
+        # We'll start at a random point in array so create random num
+        n = np.random.randint(0, len(row))
+        # We'll introduce some noise to the comparisons
+        noise = np.random.normal(0, 0.2, 1)[0]
+        # Search for a higher than max value (with noise) starting at n
+        # This is mainly to "jump" out of local minima
+        for i in range(n, len(row)-1):
+            num = row[n] + noise
+            if num >= max_val:
+                return self.states[n]
+        # If all else fails, return simply the max val for row
+        return self.states[np.argsort(row)[-1]]
 
     def probability_of_chain(self, chain):
         """
@@ -69,7 +77,8 @@ class MarkovModel:
         if len(chain) == 0:
             return 0
 
-        # If the chain is made of a single state, we return 1 if the state exists, 0 otherwise
+        # If the chain is made of a single state, we return 1 if the state 
+        # exists, 0 otherwise
         if len(chain) == 1:
             if chain[0] in self.matrix:
                 return 1
@@ -80,7 +89,8 @@ class MarkovModel:
         for state, next_state in zip(chain, chain[1:]):
             row = self.matrix[state]  # The row associated with the state
 
-            # If the transition between state and next_state is impossible, the probability of the chain is 0
+            # If the transition between state and next_state is impossible, 
+            # the probability of the chain is 0
             if next_state not in row:
                 return 0
 
@@ -89,7 +99,8 @@ class MarkovModel:
 
     def generate_chain(self, start_state, size):
         """
-        Generate of probable chain of state, respecting the probabilities in the matrix
+        Generate of probable chain of state, respecting the probabilities 
+        in the matrix
         :param start_state: the starting state of the chain
         :param size: the size of the chain
         :return: the chain as an ordered list
@@ -108,10 +119,11 @@ class MarkovModel:
         """
         # We read the text two words by two words
         for s1, s2 in zip(chain, chain[1:]):
-            self.matrix[s1][s2] += 1
+            self.matrix[self.dictionary[s1], self.dictionary[s2]] += 1
 
-        # We normalize the matrix, transforming occurrences into probabilities
-        factor = 1.0 / (len(chain) - 1)  # Instead of dividing by the number of words - 1, we use a multiplication
-        for row in self.matrix.values():
-            for state, occurences in row.items():
-                row[state] *= factor
+        # Normalize by dividing each row by its sum
+        for i in range(len(self.states)):
+            row_sum = sum(np.array(self.matrix[i, :].todense()))
+            # Calculate marginal probabilities
+            self.matrix[i, :] = self.matrix[i, :] / \
+                                self.matrix[i, :].sum()
